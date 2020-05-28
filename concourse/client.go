@@ -74,15 +74,31 @@ func NewClient(atcurl, team, username, password string) (*Client, error) {
 		return nil, err
 	}
 
+	// Check if target Concourse is more or equal to 6.1.0
+	nl, err := semver.NewConstraint(">= 6.1.0")
+	if err != nil {
+		return nil, err
+	}
+
 	// Check if target Concourse is less than '4.0.0'.
 	if s.Check(v) {
 		err = c.loginLegacy(username, password)
 	} else {
-		t, err := c.login(username, password)
+		var t *oauth2.Token
+		if nl.Check(v) {
+			u := fmt.Sprintf("%s/sky/issuer/token", c.atcurl)
+			scopes := []string{"openid", "profile", "email", "federated:id"}
+			t, err = c.login(u, username, password, scopes)
+		} else {
+			scopes := []string{"openid", "profile", "email", "federated:id", "groups"}
+			u := fmt.Sprintf("%s/sky/token", c.atcurl)
+			t, err = c.login(u, username, password, scopes)
+		}
+
 		if err != nil {
 			return nil, err
 		}
-		
+
 		// Check if the version is less than '5.5.0'.
 		if up.Check(v) {
 			err = c.singleCookie(t)
@@ -161,13 +177,12 @@ func (c *Client) splitToken(t *oauth2.Token) error {
 }
 
 // login gets an access token from Concourse.
-func (c *Client) login(username, password string) (*oauth2.Token, error) {
-	u := fmt.Sprintf("%s/sky/token", c.atcurl)
+func (c *Client) login(url, username, password string, scopes []string) (*oauth2.Token, error) {
 	config := oauth2.Config{
 		ClientID:     "fly",
 		ClientSecret: "Zmx5",
-		Endpoint:     oauth2.Endpoint{TokenURL: u},
-		Scopes:       []string{"openid", "profile", "email", "federated:id", "groups"},
+		Endpoint:     oauth2.Endpoint{TokenURL: url},
+		Scopes:       scopes,
 	}
 	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, c.conn)
 	t, err := config.PasswordCredentialsToken(ctx, username, password)
